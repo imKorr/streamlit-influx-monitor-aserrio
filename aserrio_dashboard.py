@@ -1,6 +1,7 @@
 """
 ============================================================
   ASERRIO MONITOR - Dashboard Streamlit + InfluxDB Cloud
+  Usa SQL queries (InfluxDB Cloud 3.x)
 ============================================================
   pip install streamlit influxdb-client plotly pandas
   streamlit run aserrio_dashboard.py
@@ -9,31 +10,24 @@
 
 import streamlit as st
 from influxdb_client import InfluxDBClient
+from influxdb_client.client.query_api import QueryOptions
 import plotly.graph_objects as go
 import pandas as pd
 from datetime import datetime
 import time
 
-# ── Página ────────────────────────────────────────────────
-st.set_page_config(
-    page_title="Aserrio Monitor",
-    page_icon="🪵",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+st.set_page_config(page_title="Aserrio Monitor", page_icon="🪵", layout="wide", initial_sidebar_state="expanded")
 
 st.markdown("""
 <style>
   .stApp { background-color: #0a0d0f; }
   section[data-testid="stSidebar"] { background-color: #111518; }
-  .kpi { background:#111518; border:1px solid #1e2830; border-radius:10px;
-         padding:18px; text-align:center; border-top:3px solid #00e5a0; }
+  .kpi { background:#111518; border:1px solid #1e2830; border-radius:10px; padding:18px; text-align:center; border-top:3px solid #00e5a0; }
   .kpi.blue   { border-top-color:#00b8ff; }
   .kpi.warn   { border-top-color:#ff9500; }
   .kpi.purple { border-top-color:#9c6ee8; }
   .kpi.red    { border-top-color:#ff3a3a; }
-  .kpi-label  { font-size:10px; letter-spacing:2px; color:#4a6070;
-                text-transform:uppercase; font-family:monospace; margin-bottom:6px; }
+  .kpi-label  { font-size:10px; letter-spacing:2px; color:#4a6070; text-transform:uppercase; font-family:monospace; margin-bottom:6px; }
   .kpi-val    { font-size:36px; font-weight:700; color:#00e5a0; line-height:1; }
   .kpi-val.blue   { color:#00b8ff; }
   .kpi-val.white  { color:#fff; }
@@ -41,15 +35,13 @@ st.markdown("""
   .kpi-val.purple { color:#9c6ee8; }
   .kpi-val.red    { color:#ff3a3a; }
   .kpi-unit   { font-size:11px; color:#4a6070; margin-top:3px; font-family:monospace; }
-  .alerta     { background:rgba(255,58,58,0.1); border:1px solid #ff3a3a;
-                border-radius:8px; padding:10px 14px; color:#ff3a3a;
-                font-family:monospace; font-size:13px; margin-bottom:6px; }
+  .alerta     { background:rgba(255,58,58,0.1); border:1px solid #ff3a3a; border-radius:8px; padding:10px 14px; color:#ff3a3a; font-family:monospace; font-size:13px; margin-bottom:6px; }
   .alerta.warn{ border-color:#ff9500; color:#ff9500; background:rgba(255,149,0,0.1); }
   #MainMenu,footer,header { visibility:hidden; }
 </style>
 """, unsafe_allow_html=True)
 
-# ── Sidebar / Config ──────────────────────────────────────
+# ── Sidebar ───────────────────────────────────────────────
 with st.sidebar:
     st.markdown("### 🗄 InfluxDB Cloud")
     influx_url    = st.text_input("URL", value="https://us-east-1-1.aws.cloud2.influxdata.com")
@@ -57,41 +49,50 @@ with st.sidebar:
                                    value="GwHOA55GemA6wvAdcW3mPpR83QKMeHMCNArUCVpHlkMm-8Hb5LhwoXWGWoedGHyDG2M2BLSvsUCIJH9oCWFlsg==")
     influx_org    = st.text_input("Organización", value="Aserrio Ganges")
     influx_bucket = st.text_input("Bucket", value="Monitor_Coche_Horizontal")
-
     st.markdown("---")
     st.markdown("### ⚙️ Dashboard")
     refresh      = st.slider("Actualizar cada (s)", 2, 30, 5)
-    rango_tiempo = st.selectbox("Rango de tiempo",
-                                ["-1h", "-3h", "-6h", "-12h", "-24h", "-7d"],
-                                index=0)
+    rango_tiempo = st.selectbox("Rango de tiempo", ["1 hour", "3 hours", "6 hours", "12 hours", "24 hours"], index=0)
     umbral_A     = st.number_input("Alerta corriente (A)", value=80, step=5)
     umbral_desb  = st.number_input("Alerta desbalance (%)", value=15, step=1)
-
     st.markdown("---")
     st.markdown("""<div style='font-family:monospace;font-size:10px;color:#4a6070'>
-    ASERRIO MONITOR v3.0<br>ESP32 + InfluxDB Cloud<br>EAFIT 2024</div>""",
-                unsafe_allow_html=True)
+    ASERRIO MONITOR v3.0<br>ESP32 + InfluxDB Cloud</div>""", unsafe_allow_html=True)
 
-# ── Cliente InfluxDB ──────────────────────────────────────
+# ── Cliente ───────────────────────────────────────────────
 @st.cache_resource
 def get_client(url, token, org):
     return InfluxDBClient(url=url, token=token, org=org)
 
-def query(client, org, flux):
+def query_sql(client, org, sql):
+    try:
+        tables = client.query_api().query(sql, org=org)
+        rows = []
+        for table in tables:
+            for record in table.records:
+                row = {"time": record.get_time()}
+                row.update(record.values)
+                rows.append(row)
+        return pd.DataFrame(rows)
+    except Exception as e:
+        st.sidebar.error(f"Query error: {str(e)[:100]}")
+        return pd.DataFrame()
+
+def query_flux(client, org, flux):
     try:
         tables = client.query_api().query(flux, org=org)
         rows = []
         for table in tables:
             for record in table.records:
                 rows.append({"time": record.get_time(), "field": record.get_field(),
-                             "value": record.get_value(), "measurement": record.get_measurement()})
+                             "value": record.get_value()})
         return pd.DataFrame(rows)
     except Exception as e:
         return pd.DataFrame()
 
 def fmt_tiempo(ms):
     if not ms or ms <= 0: return "0:00"
-    s = int(ms / 1000); m = s // 60; h = m // 60
+    s = int(ms/1000); m = s//60; h = m//60
     return f"{h}:{m%60:02d}:{s%60:02d}" if h > 0 else f"{m}:{s%60:02d}"
 
 # ── Header ────────────────────────────────────────────────
@@ -114,37 +115,33 @@ while True:
     try:
         client = get_client(influx_url, influx_token, influx_org)
 
-        # ── Queries ───────────────────────────────────────
-        # Último valor de corrientes
+        # Flux queries - compatibles con InfluxDB Cloud
         q_curr = f'''
         from(bucket: "{influx_bucket}")
-          |> range(start: -1m)
+          |> range(start: -2m)
           |> filter(fn: (r) => r._measurement == "corriente")
           |> last()
         '''
 
-        # Troncos en el rango seleccionado
         q_troncos = f'''
         from(bucket: "{influx_bucket}")
-          |> range(start: {rango_tiempo})
+          |> range(start: -{rango_tiempo.replace(" ","").replace("hour","h").replace("hours","h")})
           |> filter(fn: (r) => r._measurement == "tronco")
           |> pivot(rowKey:["_time"], columnKey:["_field"], valueColumn:"_value")
         '''
 
-        # Corrientes históricas para graficar
         q_curr_hist = f'''
         from(bucket: "{influx_bucket}")
-          |> range(start: {rango_tiempo})
+          |> range(start: -{rango_tiempo.replace(" ","").replace("hour","h").replace("hours","h")})
           |> filter(fn: (r) => r._measurement == "corriente")
           |> filter(fn: (r) => r._field == "L1_A" or r._field == "L2_A" or r._field == "L3_A" or r._field == "total_kW")
           |> aggregateWindow(every: 1m, fn: mean, createEmpty: false)
         '''
 
-        df_curr      = query(client, influx_org, q_curr)
-        df_troncos   = query(client, influx_org, q_troncos)
-        df_curr_hist = query(client, influx_org, q_curr_hist)
+        df_curr      = query_flux(client, influx_org, q_curr)
+        df_troncos   = query_flux(client, influx_org, q_troncos)
+        df_curr_hist = query_flux(client, influx_org, q_curr_hist)
 
-        # Extraer últimas corrientes
         def last_val(df, field, default=0.0):
             if df.empty: return default
             sub = df[df["field"] == field]
@@ -156,16 +153,27 @@ while True:
         kw  = last_val(df_curr, "total_kW")
         dsb = last_val(df_curr, "desbalance")
 
-        # Stats troncos
+        # Stats troncos - df_troncos viene pivotado (columnas = fields)
         if not df_troncos.empty and "longitud_cm" in df_troncos.columns:
-            df_t       = df_troncos.sort_values("time")
-            total_t    = len(df_t)
-            prod_cm    = df_t["longitud_cm"].sum() if "longitud_cm" in df_t else 0
-            avg_len    = df_t["longitud_cm"].mean() if "longitud_cm" in df_t else 0
-            max_len    = df_t["longitud_cm"].max()  if "longitud_cm" in df_t else 0
-            min_len    = df_t["longitud_cm"].min()  if "longitud_cm" in df_t else 0
+            df_t    = df_troncos.sort_values("time")
+            total_t = len(df_t)
+            prod_cm = df_t["longitud_cm"].sum()
+            avg_len = df_t["longitud_cm"].mean()
+            max_len = df_t["longitud_cm"].max()
+            min_len = df_t["longitud_cm"].min()
         else:
-            total_t = 0; prod_cm = 0; avg_len = 0; max_len = 0; min_len = 0
+            # Si pivot no funcionó, intentar extraer de formato largo
+            if not df_troncos.empty and "field" in df_troncos.columns:
+                sub = df_troncos[df_troncos["field"] == "longitud_cm"]
+                total_t = len(sub)
+                prod_cm = sub["value"].sum() if not sub.empty else 0
+                avg_len = sub["value"].mean() if not sub.empty else 0
+                max_len = sub["value"].max() if not sub.empty else 0
+                min_len = sub["value"].min() if not sub.empty else 0
+                df_t    = sub.rename(columns={"value":"longitud_cm"})
+            else:
+                total_t = 0; prod_cm = 0; avg_len = 0; max_len = 0; min_len = 0
+                df_t = pd.DataFrame()
 
         online = not df_curr.empty or not df_troncos.empty
 
@@ -177,14 +185,10 @@ while True:
         with main_ph.container():
 
             # ── Alertas ───────────────────────────────────
-            if l1 > umbral_A:
-                st.markdown(f"<div class='alerta'>⚡ L1 supera límite: {l1:.1f}A (máx {umbral_A}A)</div>", unsafe_allow_html=True)
-            if l2 > umbral_A:
-                st.markdown(f"<div class='alerta'>⚡ L2 supera límite: {l2:.1f}A (máx {umbral_A}A)</div>", unsafe_allow_html=True)
-            if l3 > umbral_A:
-                st.markdown(f"<div class='alerta'>⚡ L3 supera límite: {l3:.1f}A (máx {umbral_A}A)</div>", unsafe_allow_html=True)
-            if dsb > umbral_desb:
-                st.markdown(f"<div class='alerta warn'>⚠️ Desbalance trifásico: {dsb:.1f}% (máx {umbral_desb}%)</div>", unsafe_allow_html=True)
+            if l1 > umbral_A: st.markdown(f"<div class='alerta'>⚡ L1 supera límite: {l1:.1f}A</div>", unsafe_allow_html=True)
+            if l2 > umbral_A: st.markdown(f"<div class='alerta'>⚡ L2 supera límite: {l2:.1f}A</div>", unsafe_allow_html=True)
+            if l3 > umbral_A: st.markdown(f"<div class='alerta'>⚡ L3 supera límite: {l3:.1f}A</div>", unsafe_allow_html=True)
+            if dsb > umbral_desb: st.markdown(f"<div class='alerta warn'>⚠️ Desbalance: {dsb:.1f}%</div>", unsafe_allow_html=True)
 
             # ── KPIs producción ───────────────────────────
             st.markdown("#### 📊 Producción")
@@ -203,12 +207,11 @@ while True:
             cl1 = "red" if l1>umbral_A else "white"
             cl2 = "red" if l2>umbral_A else "white"
             cl3 = "red" if l3>umbral_A else "white"
-            cdb = "red" if dsb>umbral_desb else "warn"
-            e1.markdown(f"<div class='kpi {'red' if l1>umbral_A else ''}'><div class='kpi-label'>Fase L1</div><div class='kpi-val {cl1}'>{l1:.1f}</div><div class='kpi-unit'>Amperios RMS</div></div>", unsafe_allow_html=True)
-            e2.markdown(f"<div class='kpi {'red' if l2>umbral_A else ''}'><div class='kpi-label'>Fase L2</div><div class='kpi-val {cl2}'>{l2:.1f}</div><div class='kpi-unit'>Amperios RMS</div></div>", unsafe_allow_html=True)
-            e3.markdown(f"<div class='kpi {'red' if l3>umbral_A else ''}'><div class='kpi-label'>Fase L3</div><div class='kpi-val {cl3}'>{l3:.1f}</div><div class='kpi-unit'>Amperios RMS</div></div>", unsafe_allow_html=True)
+            e1.markdown(f"<div class='kpi'><div class='kpi-label'>Fase L1</div><div class='kpi-val {cl1}'>{l1:.1f}</div><div class='kpi-unit'>Amperios RMS</div></div>", unsafe_allow_html=True)
+            e2.markdown(f"<div class='kpi'><div class='kpi-label'>Fase L2</div><div class='kpi-val {cl2}'>{l2:.1f}</div><div class='kpi-unit'>Amperios RMS</div></div>", unsafe_allow_html=True)
+            e3.markdown(f"<div class='kpi'><div class='kpi-label'>Fase L3</div><div class='kpi-val {cl3}'>{l3:.1f}</div><div class='kpi-unit'>Amperios RMS</div></div>", unsafe_allow_html=True)
             e4.markdown(f"<div class='kpi blue'><div class='kpi-label'>Potencia Total</div><div class='kpi-val blue'>{kw:.2f}</div><div class='kpi-unit'>kW</div></div>", unsafe_allow_html=True)
-            e5.markdown(f"<div class='kpi {'red' if dsb>umbral_desb else 'warn'}'><div class='kpi-label'>Desbalance</div><div class='kpi-val {cdb}'>{dsb:.1f}%</div><div class='kpi-unit'>entre fases</div></div>", unsafe_allow_html=True)
+            e5.markdown(f"<div class='kpi {'red' if dsb>umbral_desb else 'warn'}'><div class='kpi-label'>Desbalance</div><div class='kpi-val {'red' if dsb>umbral_desb else 'warn'}'>{dsb:.1f}%</div><div class='kpi-unit'>entre fases</div></div>", unsafe_allow_html=True)
 
             st.markdown("<br>", unsafe_allow_html=True)
 
@@ -217,20 +220,18 @@ while True:
 
             with g1:
                 st.markdown("##### Longitud de troncos")
-                if not df_troncos.empty and "longitud_cm" in df_troncos.columns:
-                    df_plot = df_t.tail(40).copy()
+                if not df_t.empty and "longitud_cm" in df_t.columns:
+                    df_plot = df_t.tail(40)
                     avg_v   = df_plot["longitud_cm"].mean()
                     colors  = ["#00b8ff" if v > avg_v*1.1 else "#ff9500" if v < avg_v*0.9 else "#00e5a0"
                                for v in df_plot["longitud_cm"]]
                     fig = go.Figure()
-                    fig.add_bar(x=list(range(1, len(df_plot)+1)),
-                                y=df_plot["longitud_cm"], marker_color=colors)
-                    fig.add_hline(y=avg_v, line_dash="dash", line_color="#fff",
-                                  opacity=0.4, annotation_text=f"Prom {avg_v:.0f}cm")
+                    fig.add_bar(x=list(range(1, len(df_plot)+1)), y=df_plot["longitud_cm"], marker_color=colors)
+                    fig.add_hline(y=avg_v, line_dash="dash", line_color="#fff", opacity=0.4,
+                                  annotation_text=f"Prom {avg_v:.0f}cm")
                     fig.update_layout(paper_bgcolor="#111518", plot_bgcolor="#0a0d0f",
-                                      font_color="#c8d6df", height=260,
-                                      margin=dict(l=0,r=0,t=10,b=0), showlegend=False,
-                                      xaxis=dict(gridcolor="#1e2830"),
+                                      font_color="#c8d6df", height=260, margin=dict(l=0,r=0,t=10,b=0),
+                                      showlegend=False, xaxis=dict(gridcolor="#1e2830"),
                                       yaxis=dict(gridcolor="#1e2830", title="cm"))
                     st.plotly_chart(fig, use_container_width=True)
                 else:
@@ -240,18 +241,15 @@ while True:
                 st.markdown("##### Corriente trifásica histórica")
                 if not df_curr_hist.empty:
                     fig2 = go.Figure()
-                    colores = {"L1_A":"#00e5a0", "L2_A":"#00b8ff", "L3_A":"#ff9500"}
-                    for fase, color in colores.items():
-                        sub = df_curr_hist[df_curr_hist["field"] == fase]
+                    for fase, color in {"L1_A":"#00e5a0","L2_A":"#00b8ff","L3_A":"#ff9500"}.items():
+                        sub = df_curr_hist[df_curr_hist["field"]==fase]
                         if not sub.empty:
                             fig2.add_scatter(x=sub["time"], y=sub["value"],
-                                             name=fase.replace("_A",""),
-                                             line=dict(color=color, width=2))
-                    fig2.add_hline(y=umbral_A, line_dash="dash", line_color="#ff3a3a",
-                                   opacity=0.6, annotation_text=f"Límite {umbral_A}A")
+                                             name=fase.replace("_A",""), line=dict(color=color, width=2))
+                    fig2.add_hline(y=umbral_A, line_dash="dash", line_color="#ff3a3a", opacity=0.6,
+                                   annotation_text=f"Límite {umbral_A}A")
                     fig2.update_layout(paper_bgcolor="#111518", plot_bgcolor="#0a0d0f",
-                                       font_color="#c8d6df", height=260,
-                                       margin=dict(l=0,r=0,t=10,b=0),
+                                       font_color="#c8d6df", height=260, margin=dict(l=0,r=0,t=10,b=0),
                                        legend=dict(font=dict(color="#c8d6df")),
                                        xaxis=dict(gridcolor="#1e2830"),
                                        yaxis=dict(gridcolor="#1e2830", title="A"))
@@ -259,10 +257,10 @@ while True:
                 else:
                     st.info("Sin historial de corrientes aún")
 
-            # ── Potencia histórica ─────────────────────────
+            # ── Potencia ──────────────────────────────────
             st.markdown("##### Potencia consumida (kW)")
             if not df_curr_hist.empty:
-                sub_kw = df_curr_hist[df_curr_hist["field"] == "total_kW"]
+                sub_kw = df_curr_hist[df_curr_hist["field"]=="total_kW"]
                 if not sub_kw.empty:
                     fig3 = go.Figure()
                     fig3.add_scatter(x=sub_kw["time"], y=sub_kw["value"],
@@ -275,19 +273,17 @@ while True:
                                        yaxis=dict(gridcolor="#1e2830", title="kW"))
                     st.plotly_chart(fig3, use_container_width=True)
 
-            # ── Tabla historial ────────────────────────────
+            # ── Tabla ─────────────────────────────────────
             st.markdown("##### 📋 Historial de troncos")
-            if not df_troncos.empty and "longitud_cm" in df_troncos.columns:
-                cols_disp = [c for c in ["time","longitud_cm","duracion_ms","velocidad_cms","L1_A","L2_A","L3_A","potencia_kW"]
-                             if c in df_t.columns]
-                df_show = df_t[cols_disp].sort_values("time", ascending=False).head(20).copy()
-                df_show.columns = [c.replace("_"," ").upper() for c in df_show.columns]
-                st.dataframe(df_show, use_container_width=True, hide_index=True)
+            if not df_t.empty and "longitud_cm" in df_t.columns:
+                df_show = df_t.sort_values("time", ascending=False).head(15).copy()
+                cols = [c for c in ["time","longitud_cm","duracion_ms","velocidad_cms","L1_A","L2_A","L3_A","potencia_kW"] if c in df_show.columns]
+                st.dataframe(df_show[cols], use_container_width=True, hide_index=True)
             else:
-                st.info("Sin registros — mueve el encoder para generar datos")
+                st.info("Sin registros — el simulador EC2 está enviando datos...")
 
     except Exception as e:
-        st.error(f"Error de conexión: {e}")
+        st.error(f"Error: {e}")
 
     time.sleep(refresh)
     st.cache_data.clear() if hasattr(st, 'cache_data') else None
