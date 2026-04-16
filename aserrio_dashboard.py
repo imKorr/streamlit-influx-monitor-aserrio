@@ -109,7 +109,8 @@ ph_graficos = st.empty()
 ph_tabla    = st.empty()
 
 # ── Loop principal ────────────────────────────────────────
-while True:
+@st.fragment(run_every=f"{refresh}s")
+def dashboard():
     client = get_client(influx_url, influx_token, influx_org)
 
     # ── Queries Flux ──────────────────────────────────────
@@ -217,19 +218,35 @@ while True:
         with g1:
             st.markdown("##### Longitud de piezas procesadas")
             if not df_t.empty and "longitud_cm" in df_t.columns:
-                df_plot = df_t.tail(40)
-                avg_v   = df_plot["longitud_cm"].mean()
-                colors  = ["#00b8ff" if v > avg_v*1.1 else "#ff9500" if v < avg_v*0.9 else "#00e5a0"
-                           for v in df_plot["longitud_cm"]]
+                df_plot = df_t.copy()
+                # Redondear a múltiplo de 5cm para agrupar medidas estables
+                df_plot["longitud_r"] = (df_plot["longitud_cm"] / 5).round() * 5
+                avg_v = df_plot["longitud_cm"].mean()
+
                 fig = go.Figure()
-                fig.add_bar(x=list(range(1, len(df_plot)+1)),
-                            y=df_plot["longitud_cm"], marker_color=colors)
+                # Línea suavizada de longitud real
+                fig.add_scatter(
+                    x=df_plot["time"], y=df_plot["longitud_cm"],
+                    mode="lines+markers",
+                    line=dict(color="#00e5a0", width=2),
+                    marker=dict(size=5, color="#00e5a0"),
+                    name="Longitud real"
+                )
+                # Línea de valor agrupado (más estable visualmente)
+                fig.add_scatter(
+                    x=df_plot["time"], y=df_plot["longitud_r"],
+                    mode="lines",
+                    line=dict(color="#00b8ff", width=1.5, dash="dot"),
+                    name="Agrupado ±5cm",
+                    opacity=0.6
+                )
                 fig.add_hline(y=avg_v, line_dash="dash", line_color="#ffffff",
-                              opacity=0.4, annotation_text=f"Prom {avg_v:.0f}cm")
+                              opacity=0.3, annotation_text=f"Prom {avg_v:.0f}cm")
                 fig.update_layout(
                     paper_bgcolor="#111518", plot_bgcolor="#0a0d0f",
                     font_color="#c8d6df", height=260,
-                    margin=dict(l=0,r=0,t=10,b=0), showlegend=False,
+                    margin=dict(l=0,r=0,t=10,b=0),
+                    legend=dict(font=dict(color="#c8d6df"), bgcolor="rgba(0,0,0,0)"),
                     xaxis=dict(gridcolor="#1e2830"),
                     yaxis=dict(gridcolor="#1e2830", title="cm"))
                 st.plotly_chart(fig, use_container_width=True)
@@ -295,5 +312,4 @@ while True:
         else:
             st.info("Sin registros de producción en el rango seleccionado")
 
-    time.sleep(refresh)
-    st.rerun()
+dashboard()
